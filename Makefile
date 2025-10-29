@@ -13,7 +13,7 @@ TARGET  ?= derivex
 SRCS := $(SRC_DIR)/regex.c $(SRC_DIR)/main.c
 OBJS := $(BUILD)/regex.o $(BUILD)/main.o
 
-.PHONY: all clean test run
+.PHONY: all clean
 
 all: $(TARGET)
 
@@ -26,12 +26,9 @@ $(BUILD)/%.o: $(SRC_DIR)/%.c $(SRC_DIR)/regex.h | $(BUILD)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-test: $(TARGET)
-	./$(TARGET) --test
 
-run: $(TARGET)
-	@echo "Usage: ./$(TARGET) PATTERN [--full|-f] [STRING]"
-	./$(TARGET) "a*b" --full aab
+
+
 
 clean:
 	rm -rf $(BUILD) $(TARGET)
