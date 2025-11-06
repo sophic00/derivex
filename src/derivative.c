@@ -1,5 +1,11 @@
 #include "internal.h"
 
+// check nullibility
+// - ε and A* are nullable
+// - A|B is nullable if either A or B is nullable
+// - AB is nullable if both A and B are nullable
+// - A single literal or class is not nullable
+// - ∅ is not nullable
 int is_nullable(const dx_regex *r) {
   switch (r->kind) {
   case R_NULL:
@@ -22,18 +28,23 @@ int is_nullable(const dx_regex *r) {
 
 dx_regex *derive(const dx_regex *r, unsigned char c) {
   switch (r->kind) {
+    // d(∅, c) = ∅, d(ε, c) = ∅
   case R_NULL:
   case R_EPS:
     return mk_null();
+    // d(a, c) = ε if a == c, else ∅
   case R_CHAR:
     return (r->u.ch == c) ? mk_eps() : mk_null();
+    // d([S], c) = ε if c ∈ S
   case R_CLASS:
     return r->u.cls.set[c] ? mk_eps() : mk_null();
+    // d(A | B, c) = d(A, c) | d(B, c)
   case R_ALT: {
     dx_regex *da = derive(r->u.pair.a, c);
     dx_regex *db = derive(r->u.pair.b, c);
     return smart_alt(da, db);
   }
+    // d(AB) = d(A)B | (nullable(A) ? d(B) : ∅)
   case R_CONCAT: {
     dx_regex *dA = derive(r->u.pair.a, c);
     dx_regex *Bclone = clone_regex(r->u.pair.b);
@@ -44,6 +55,7 @@ dx_regex *derive(const dx_regex *r, unsigned char c) {
     } else
       return term1;
   }
+    // d(A*) = d(A) A*
   case R_STAR: {
     dx_regex *dA = derive(r->u.sub, c);
     dx_regex *Astar = smart_star(clone_regex(r->u.sub));
