@@ -7,21 +7,29 @@
 
 #include "regex.h"
 
-typedef enum { R_NULL, R_EPS, R_CHAR, R_CLASS, R_ALT, R_CONCAT, R_STAR } RKind;
+typedef enum {
+  R_NULL,   // ∅ (matches nothing)
+  R_EPS,    // ε (empty string)
+  R_CHAR,   // single literal character
+  R_CLASS,  // character class [abc...] (no ranges)
+  R_ALT,    // alternation A|B
+  R_CONCAT, // concatenation AB
+  R_STAR    // Kleene star A*
+} RKind;
 
 struct dx_regex {
   RKind kind;
   union {
-    unsigned char ch;
-    struct {
+    unsigned char ch; // for R_CHAR
+    struct {          // for R_CLASS
       bool set[256];
-      int count;
+      int count; // number of characters in set
     } cls;
-    struct {
+    struct { // for R_ALT, R_CONCAT
       struct dx_regex *a;
       struct dx_regex *b;
     } pair;
-    struct dx_regex *sub;
+    struct dx_regex *sub; // for R_STAR
   } u;
 };
 
