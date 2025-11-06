@@ -7,10 +7,6 @@
 
 #include "regex.h"
 
-// -----------------------------
-// Internal AST representation
-// -----------------------------
-
 typedef enum {
   R_NULL,   // ∅ (matches nothing)
   R_EPS,    // ε (empty string)
@@ -41,9 +37,11 @@ struct dx_regex {
 static struct dx_regex DX_NULL_NODE = {.kind = R_NULL};
 static struct dx_regex DX_EPS_NODE = {.kind = R_EPS};
 
+// function to make null and eps nodes
 static inline dx_regex *mk_null(void) { return &DX_NULL_NODE; }
 static inline dx_regex *mk_eps(void) { return &DX_EPS_NODE; }
 
+// function to make single char node
 static dx_regex *mk_char(unsigned char c) {
   dx_regex *r = (dx_regex *)malloc(sizeof(dx_regex));
   if (!r)
@@ -53,6 +51,7 @@ static dx_regex *mk_char(unsigned char c) {
   return r;
 }
 
+// function to make a class [abc]
 static dx_regex *mk_class_from_set(const bool set[256], int count) {
   if (count <= 0) {
     return mk_null();
@@ -72,6 +71,7 @@ static dx_regex *mk_class_from_set(const bool set[256], int count) {
   return r;
 }
 
+// function for making node a|b
 static dx_regex *mk_alt(dx_regex *a, dx_regex *b) {
   dx_regex *r = (dx_regex *)malloc(sizeof(dx_regex));
   if (!r) {
@@ -83,6 +83,7 @@ static dx_regex *mk_alt(dx_regex *a, dx_regex *b) {
   return r;
 }
 
+// function for making node ab
 static dx_regex *mk_concat(dx_regex *a, dx_regex *b) {
   dx_regex *r = (dx_regex *)malloc(sizeof(dx_regex));
   if (!r) {
@@ -94,6 +95,7 @@ static dx_regex *mk_concat(dx_regex *a, dx_regex *b) {
   return r;
 }
 
+// function for making node a*, (ab)*, etc
 static dx_regex *mk_star(dx_regex *sub) {
   dx_regex *r = (dx_regex *)malloc(sizeof(dx_regex));
   if (!r) {
@@ -108,9 +110,7 @@ static dx_regex *mk_star(dx_regex *sub) {
 static void dx_free_internal(dx_regex *r);
 static dx_regex *clone_regex(const dx_regex *r);
 static int is_nullable(const dx_regex *r);
-static dx_regex *derivative_no_share(const dx_regex *r, unsigned char c);
-
-// Smart constructors with basic simplifications and proper memory handling.
+static dx_regex *derive(const dx_regex *r, unsigned char c);
 
 static dx_regex *smart_alt(dx_regex *a, dx_regex *b) {
   if (a->kind == R_NULL) { // ∅ | B => B
@@ -119,12 +119,11 @@ static dx_regex *smart_alt(dx_regex *a, dx_regex *b) {
   if (b->kind == R_NULL) { // A | ∅ => A
     return a;
   }
-  // If they point to the same node (common in simplified forms)
+  // If they point to the same node, free mem and return other
   if (a == b) {
     dx_free_internal(b);
     return a;
   }
-  // No further normalization; keep it simple.
   return mk_alt(a, b);
 }
 
@@ -156,10 +155,6 @@ static dx_regex *smart_star(dx_regex *a) {
   }
   return mk_star(a);
 }
-
-// -----------------------------
-// Free and clone
-// -----------------------------
 
 static void dx_free_internal(dx_regex *r) {
   if (!r)
@@ -223,10 +218,12 @@ static dx_regex *clone_regex(const dx_regex *r) {
   return mk_null();
 }
 
-// -----------------------------
-// Nullability
-// -----------------------------
-
+// check nullibility
+// - ε and A* are nullable
+// - A|B is nullable if either A or B is nullable
+// - AB is nullable if both A and B are nullable
+// - A single literal or class is not nullable
+// - ∅ is not nullable
 static int is_nullable(const dx_regex *r) {
   switch (r->kind) {
   case R_NULL:
@@ -247,52 +244,45 @@ static int is_nullable(const dx_regex *r) {
   return 0;
 }
 
-// -----------------------------
-// Derivative (no sharing from input tree)
-// -----------------------------
-
-static dx_regex *derivative_no_share(const dx_regex *r, unsigned char c) {
+static dx_regex *derive(const dx_regex *r, unsigned char c) {
   switch (r->kind) {
+    // d(∅, c) = ∅, d(ε, c) = ∅
   case R_NULL:
   case R_EPS:
     return mk_null();
-  case R_CHAR: {
+    // d(a, c) = ε if a == c, else ∅
+  case R_CHAR:
     return (r->u.ch == c) ? mk_eps() : mk_null();
-  }
-  case R_CLASS: {
+    // d([S], c) = ε if c ∈ S
+  case R_CLASS:
     return r->u.cls.set[c] ? mk_eps() : mk_null();
-  }
   case R_ALT: {
-    dx_regex *da = derivative_no_share(r->u.pair.a, c);
-    dx_regex *db = derivative_no_share(r->u.pair.b, c);
+    // d(A | B, c) = d(A, c) | d(B, c)
+    dx_regex *da = derive(r->u.pair.a, c);
+    dx_regex *db = derive(r->u.pair.b, c);
     return smart_alt(da, db);
   }
   case R_CONCAT: {
     // d(AB) = d(A)B | (nullable(A) ? d(B) : ∅)
-    dx_regex *dA = derivative_no_share(r->u.pair.a, c);
+    dx_regex *dA = derive(r->u.pair.a, c);
     dx_regex *Bclone = clone_regex(r->u.pair.b); // ensure no sharing
     dx_regex *term1 = smart_concat(dA, Bclone);
 
     if (is_nullable(r->u.pair.a)) {
-      dx_regex *dB = derivative_no_share(r->u.pair.b, c);
+      dx_regex *dB = derive(r->u.pair.b, c);
       return smart_alt(term1, dB);
-    } else {
+    } else
       return term1;
-    }
   }
   case R_STAR: {
     // d(A*) = d(A) A*
-    dx_regex *dA = derivative_no_share(r->u.sub, c);
+    dx_regex *dA = derive(r->u.sub, c);
     dx_regex *Astar = smart_star(clone_regex(r->u.sub));
     return smart_concat(dA, Astar);
   }
   }
   return mk_null();
 }
-
-// -----------------------------
-// Parser
-// -----------------------------
 
 typedef struct {
   const char *s;
@@ -313,7 +303,7 @@ static bool p_eof(Parser *p) { return p->s[p->i] == '\0'; }
 
 static void p_set_error(Parser *p, const char *fmt, ...) {
   if (p->err)
-    return; // keep first error
+    return;
   // Create message with context
   char buf[256];
   va_list ap;
@@ -349,13 +339,12 @@ static dx_regex *parse_atom(Parser *p);
 static bool is_atom_start(char c) {
   if (c == '\0')
     return false;
-  // cannot start with these outside class
   if (c == '|' || c == ')' || c == '*')
     return false;
-  // valid starts
   return true; // includes '(' '[' '\' and any literal
 }
 
+// parse [abc] type
 static dx_regex *parse_class(Parser *p) {
   // assumes '[' already consumed
   bool set[256] = {false};
@@ -381,14 +370,15 @@ static dx_regex *parse_class(Parser *p) {
       count++;
     }
   }
-  if (!closed && !p->err) {
+  if (!closed && !p->err)
     p_set_error(p, "unterminated character class (missing ']')");
-  }
+
   return mk_class_from_set(set, count);
 }
 
 static dx_regex *parse_atom(Parser *p) {
   char c = p_peek(p);
+  // parse (A|B) type
   if (c == '(') {
     p_get(p); // consume '('
     dx_regex *inside = parse_alt(p);
@@ -401,7 +391,8 @@ static dx_regex *parse_atom(Parser *p) {
       dx_free_internal(inside);
       return mk_null();
     }
-  } else if (c == '[') {
+  } // parse [abc] type
+  else if (c == '[') {
     p_get(p); // consume '['
     return parse_class(p);
   } else if (c == '\\') {
@@ -416,7 +407,6 @@ static dx_regex *parse_atom(Parser *p) {
     p_get(p);
     return mk_char((unsigned char)c);
   } else {
-    // Should not happen if caller guards well.
     p_set_error(p, "expected atom");
     return mk_null();
   }
@@ -441,14 +431,15 @@ static dx_regex *parse_concat(Parser *p) {
       dx_free_internal(left);
       return u;
     }
+    // check for first itr of loop
     if (!left) {
       left = u;
     } else {
       left = smart_concat(left, u);
     }
   }
+  // Empty concatenation is ε
   if (!left) {
-    // Empty concatenation is ε
     left = mk_eps();
   }
   return left;
@@ -506,7 +497,7 @@ dx_regex *dx_compile(const char *pattern, char **error_msg) {
 
   if (p.err) {
     if (error_msg) {
-      *error_msg = p.err; // transfer ownership
+      *error_msg = p.err;
     } else {
       free(p.err);
     }
@@ -522,7 +513,7 @@ int dx_match_full(const dx_regex *re, const char *input) {
 
   dx_regex *cur = clone_regex(re); // work on a private copy
   for (const unsigned char *p = (const unsigned char *)input; *p; ++p) {
-    dx_regex *next = derivative_no_share(cur, *p);
+    dx_regex *next = derive(cur, *p);
     dx_free_internal(cur);
     cur = next;
   }
@@ -543,7 +534,7 @@ int dx_search(const dx_regex *re, const char *input) {
   for (size_t i = 0; i < n; i++) {
     dx_regex *cur = clone_regex(re);
     for (size_t j = i; j < n; j++) {
-      dx_regex *next = derivative_no_share(cur, (unsigned char)input[j]);
+      dx_regex *next = derive(cur, (unsigned char)input[j]);
       dx_free_internal(cur);
       cur = next;
       if (is_nullable(cur)) {
