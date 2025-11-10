@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
   free(err);
 
   // Substring search semantics: returns MATCH if any substring matches PATTERN.
-  int matched = dx_search(re, text);
+  int matched = dx_match_full(re, text);
 
   printf("%s\n", matched ? "MATCH" : "NO MATCH");
 

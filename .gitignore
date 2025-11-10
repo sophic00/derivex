@@ -1,2 +1,6 @@
 build/
 derivex
+*_bench*
+*.txt
+*.out
+*.py
